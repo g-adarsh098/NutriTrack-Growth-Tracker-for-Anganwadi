@@ -7,3 +7,5 @@ Thumbs.db
 .vscode/
 .idea/
 *.log
+
+DB_PASSWORD='AdarshG@15'

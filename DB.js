@@ -9,7 +9,7 @@ app.use(express.json());
 const connection = mysql.createConnection({
     host: '127.0.0.1',
     user: 'root',
-    password: 'AdarshG@15', 
+    password: 'process.env.DB_PASSWORD', 
     database: 'sih',
     port: 3306
 });
