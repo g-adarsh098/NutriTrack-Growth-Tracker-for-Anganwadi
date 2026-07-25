@@ -61,6 +61,52 @@ function renderTable(data) {
     });
 }
 
+async function loadData() {
+    // Show the small inner table spinner just in case the app is already loaded
+    // and the user is refreshing the data by adding a new record.
+    setUIState('loading'); 
+    
+    try {
+        const response = await fetch('http://localhost:3000/api/measurements');
+        
+        if (!response.ok) {
+            throw new Error('Server rejected the request');
+        }
+
+        globalMeasurements = await response.json();
+        
+        // Data successfully retrieved! Hide the full-page NutriTrack loader
+        const appLoader = document.getElementById('appLoader');
+        if (appLoader) {
+            appLoader.style.opacity = '0';
+            setTimeout(() => {
+                appLoader.style.visibility = 'hidden';
+                appLoader.style.display = 'none';
+            }, 500);
+        }
+        
+        const now = new Date();
+        document.getElementById('lastUpdatedTime').innerText = `Last Updated: ${now.toLocaleTimeString()}`;
+        
+        if (globalMeasurements.length === 0) {
+            document.getElementById('emptyStateMessage').innerText = "The database is empty. Add a new record to get started.";
+            setUIState('empty');
+        } else {
+            setUIState('data');
+            renderTable(globalMeasurements);
+        }
+    } catch (error) {
+        // Database connection failed. Hide the full-page loader immediately 
+        // so the user can see the regular error screen.
+        const appLoader = document.getElementById('appLoader');
+        if (appLoader) {
+            appLoader.style.display = 'none';
+        }
+        
+        setUIState('error');
+    }
+}
+
 function filterData() {
     const searchVal = document.getElementById('searchInput').value.toLowerCase();
     const statusVal = document.getElementById('statusFilter').value;
