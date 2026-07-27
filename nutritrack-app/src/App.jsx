@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import AppLoader        from './components/AppLoader.jsx';
 import TopBar           from './components/TopBar.jsx';
 import Header           from './components/Header.jsx';
@@ -13,7 +13,7 @@ export default function App() {
   const [uiState,      setUiState]      = useState('loading');
   const [lastUpdated,  setLastUpdated]  = useState('');
 
-  // ── Filter state ────────────────────────────────────────
+  // ── Search / filter state (controlled inputs) ───────────
   const [searchVal,    setSearchVal]    = useState('');
   const [statusFilter, setStatusFilter] = useState('All');
 
@@ -24,13 +24,24 @@ export default function App() {
   // ── Full-page loader ────────────────────────────────────
   const [loaderHidden, setLoaderHidden] = useState(false);
 
-  // ── Load data from API ──────────────────────────────────
-  async function loadData() {
+  // ── Debounce timer ref ──────────────────────────────────
+  const debounceRef = useRef(null);
+
+  // ── Core fetch — asks the SERVER for only matching rows ─
+  // q and status are forwarded as query params so the DB runs
+  // the WHERE clause; nothing is loaded and hidden in the browser.
+  const fetchFromServer = useCallback(async (q, status) => {
     setUiState('loading');
+
+    const params = new URLSearchParams();
+    if (q && q.trim())    params.set('q', q.trim());
+    if (status !== 'All') params.set('status', status);
+
     try {
-      const res = await fetch('/api/measurements');
+      const res = await fetch(`/api/measurements?${params.toString()}`);
       if (!res.ok) throw new Error('Server error');
       const data = await res.json();
+
       setLoaderHidden(true);
       setMeasurements(data);
       setLastUpdated(new Date().toLocaleTimeString());
@@ -39,31 +50,45 @@ export default function App() {
       setLoaderHidden(true);
       setUiState('error');
     }
-  }
+  }, []);
 
-  useEffect(() => { loadData(); }, []);
+  // Initial load — no filters
+  useEffect(() => { fetchFromServer('', 'All'); }, [fetchFromServer]);
 
-  // ── Filtered list (memoised) ────────────────────────────
-  const filtered = useMemo(() => {
-    const q = searchVal.toLowerCase();
-    return measurements.filter((row) => {
-      const matchSearch = `${row.record_id} ${row.child_name}`.toLowerCase().includes(q);
-      const matchStatus = statusFilter === 'All' || row.status === statusFilter;
-      return matchSearch && matchStatus;
-    });
-  }, [measurements, searchVal, statusFilter]);
+  // ── Debounced search handler ────────────────────────────
+  // Waits 350 ms after the user stops typing before hitting
+  // the server, so we don't fire a request on every keystroke.
+  const handleSearch = useCallback((val) => {
+    setSearchVal(val);
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      fetchFromServer(val, statusFilter);
+    }, 350);
+  }, [fetchFromServer, statusFilter]);
+
+  // Status dropdown fires immediately (no debounce needed)
+  const handleFilter = useCallback((val) => {
+    setStatusFilter(val);
+    clearTimeout(debounceRef.current);
+    fetchFromServer(searchVal, val);
+  }, [fetchFromServer, searchVal]);
 
   // ── Derived display state ───────────────────────────────
-  const displayState = uiState === 'data'
-    ? filtered.length === 0 ? 'empty-filtered' : 'data'
+  const displayState = uiState === 'empty' && (searchVal || statusFilter !== 'All')
+    ? 'empty-filtered'
     : uiState;
 
   // ── Handlers ────────────────────────────────────────────
-  const openAdd   = ()    => { setEditRow(null); setModalOpen(true); };
-  const openEdit  = (row) => { setEditRow(row);  setModalOpen(true); };
-  const closeModal = ()   => setModalOpen(false);
-  const handleSaved = ()  => loadData();
-  const resetFilters = () => { setSearchVal(''); setStatusFilter('All'); };
+  const openAdd     = ()    => { setEditRow(null); setModalOpen(true); };
+  const openEdit    = (row) => { setEditRow(row);  setModalOpen(true); };
+  const closeModal  = ()    => setModalOpen(false);
+  const handleSaved = ()    => fetchFromServer(searchVal, statusFilter);
+
+  const resetFilters = () => {
+    setSearchVal('');
+    setStatusFilter('All');
+    fetchFromServer('', 'All');
+  };
 
   return (
     <>
@@ -87,10 +112,10 @@ export default function App() {
         <Header
           searchVal={searchVal}
           statusFilter={statusFilter}
-          onSearch={setSearchVal}
-          onFilter={setStatusFilter}
+          onSearch={handleSearch}
+          onFilter={handleFilter}
           onAdd={openAdd}
-          filteredCount={filtered.length}
+          filteredCount={measurements.length}
           totalCount={measurements.length}
         />
 
@@ -103,7 +128,7 @@ export default function App() {
             <StateMessage
               type="error"
               message="Connection failed. Could not reach the server."
-              onRetry={loadData}
+              onRetry={() => fetchFromServer(searchVal, statusFilter)}
             />
           )}
           {displayState === 'empty' && (
@@ -116,12 +141,14 @@ export default function App() {
           {displayState === 'empty-filtered' && (
             <StateMessage
               type="empty"
-              message="No records match your current search or filter."
+              message={searchVal
+                ? `No records found matching "${searchVal}". Try a different search term.`
+                : 'No records match the selected filter.'}
               onReset={resetFilters}
             />
           )}
           {displayState === 'data' && (
-            <DataTable data={filtered} onEdit={openEdit} />
+            <DataTable data={measurements} onEdit={openEdit} />
           )}
         </div>
       </div>
